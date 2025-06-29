@@ -96,8 +96,9 @@ static bool check_socket_dir(void) {
 		wlr_log(WLR_ERROR, "%s is not a directory", socket_dir);
 		return false;
 	}
-	if (!((buf.st_uid == 0) || (buf.st_uid == getuid()))) {
-		wlr_log(WLR_ERROR, "%s not owned by root or us", socket_dir);
+	if (!((buf.st_uid == 0) || (buf.st_uid == getuid()) || (buf.st_uid == 65534)))
+	{
+		wlr_log(WLR_ERROR, "%s not owned by root, us, or flatpak bubblewrap", socket_dir);
 		return false;
 	}
 	if (!(buf.st_mode & S_ISVTX)) {
