@@ -168,7 +168,7 @@ int open_display_sockets(int socks[2]) {
 	int lock_fd, display;
 	char lock_name[64];
 
-	for (display = 0; display <= 32; display++) {
+	for (display = 1; display <= 32; display++) {
 		snprintf(lock_name, sizeof(lock_name), lock_fmt, display);
 		if ((lock_fd = open(lock_name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0444)) >= 0) {
 			if (!open_sockets(socks, display)) {
