@@ -396,6 +396,7 @@ void finish_drm_resources(struct wlr_drm_backend *drm) {
 		struct wlr_drm_plane *plane = &drm->planes[i];
 		drm_plane_finish_surface(plane);
 		wlr_drm_format_set_finish(&plane->formats);
+		free(plane->cursor_sizes);
 	}
 
 	free(drm->planes);
@@ -576,6 +577,16 @@ static void drm_connector_apply_commit(const struct wlr_drm_connector_state *sta
 
 		conn->cursor_enabled = false;
 		conn->crtc = NULL;
+
+		// Legacy uAPI doesn't support requesting page-flip events when
+		// turning off a CRTC
+		if (page_flip != NULL && conn->backend->iface == &legacy_iface) {
+			drm_page_flip_pop(page_flip, crtc->id);
+			conn->pending_page_flip = NULL;
+			if (page_flip->connectors_len == 0) {
+				drm_page_flip_destroy(page_flip);
+			}
+		}
 	}
 }
 
@@ -607,6 +618,7 @@ static bool drm_commit(struct wlr_drm_backend *drm,
 		if (page_flip == NULL) {
 			return false;
 		}
+		page_flip->async = (flags & DRM_MODE_PAGE_FLIP_ASYNC);
 	}
 
 	bool ok = drm->iface->commit(drm, state, page_flip, flags, test_only);
@@ -784,13 +796,12 @@ static bool drm_connector_prepare(struct wlr_drm_connector_state *conn_state, bo
 		return false;
 	}
 
-	if ((state->committed & WLR_OUTPUT_STATE_ENABLED) && state->enabled) {
-		if (output->current_mode == NULL &&
-				!(state->committed & WLR_OUTPUT_STATE_MODE)) {
-			wlr_drm_conn_log(conn, WLR_DEBUG,
-				"Can't enable an output without a mode");
-			return false;
-		}
+	if ((state->committed & WLR_OUTPUT_STATE_ENABLED) && state->enabled &&
+			output->width == 0 && output->height == 0 &&
+			!(state->committed & WLR_OUTPUT_STATE_MODE)) {
+		wlr_drm_conn_log(conn, WLR_DEBUG,
+			"Can't enable an output without a mode");
+		return false;
 	}
 
 	if ((state->committed & WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED) &&
@@ -799,6 +810,22 @@ static bool drm_connector_prepare(struct wlr_drm_connector_state *conn_state, bo
 		wlr_drm_conn_log(conn, WLR_DEBUG,
 				"Can't enable adaptive sync: connector doesn't support VRR");
 		return false;
+	}
+
+	if ((state->committed & WLR_OUTPUT_STATE_BUFFER) && conn->backend->mgpu_renderer.wlr_rend) {
+		struct wlr_dmabuf_attributes dmabuf;
+		if (!wlr_buffer_get_dmabuf(state->buffer, &dmabuf)) {
+			wlr_drm_conn_log(conn, WLR_DEBUG, "Buffer is not a DMA-BUF");
+			return false;
+		}
+
+		if (!wlr_drm_format_set_has(&conn->backend->mgpu_formats, dmabuf.format, dmabuf.modifier)) {
+			wlr_drm_conn_log(conn, WLR_DEBUG,
+				"Buffer format 0x%"PRIX32" with modifier 0x%"PRIX64" cannot be "
+				"imported into multi-GPU renderer",
+				dmabuf.format, dmabuf.modifier);
+			return false;
+		}
 	}
 
 	if (test_only && conn->backend->parent) {
@@ -1554,6 +1581,7 @@ static bool connect_drm_connector(struct wlr_drm_connector *wlr_conn,
 
 	wlr_log(WLR_INFO, "Detected modes:");
 
+	bool found_current_mode = false;
 	for (int i = 0; i < drm_conn->count_modes; ++i) {
 		if (drm_conn->modes[i].flags & DRM_MODE_FLAG_INTERLACE) {
 			continue;
@@ -1572,14 +1600,7 @@ static bool connect_drm_connector(struct wlr_drm_connector *wlr_conn,
 		if (current_modeinfo != NULL && memcmp(&mode->drm_mode,
 				current_modeinfo, sizeof(*current_modeinfo)) == 0) {
 			wlr_output_state_set_mode(&state, &mode->wlr_mode);
-
-			uint64_t mode_id = 0;
-			get_drm_prop(drm->fd, wlr_conn->crtc->id,
-				wlr_conn->crtc->props.mode_id, &mode_id);
-
-			wlr_conn->crtc->own_mode_id = false;
-			wlr_conn->crtc->mode_id = mode_id;
-			wlr_conn->refresh = calculate_refresh_rate(current_modeinfo);
+			found_current_mode = true;
 		}
 
 		wlr_log(WLR_INFO, "  %"PRId32"x%"PRId32" @ %.3f Hz %s",
@@ -1588,6 +1609,23 @@ static bool connect_drm_connector(struct wlr_drm_connector *wlr_conn,
 			mode->wlr_mode.preferred ? "(preferred)" : "");
 
 		wl_list_insert(modes.prev, &mode->wlr_mode.link);
+	}
+
+	if (current_modeinfo != NULL) {
+		int32_t refresh = calculate_refresh_rate(current_modeinfo);
+
+		if (!found_current_mode) {
+			wlr_output_state_set_custom_mode(&state,
+				current_modeinfo->hdisplay, current_modeinfo->vdisplay, refresh);
+		}
+
+		uint64_t mode_id = 0;
+		get_drm_prop(drm->fd, wlr_conn->crtc->id,
+			wlr_conn->crtc->props.mode_id, &mode_id);
+
+		wlr_conn->crtc->own_mode_id = false;
+		wlr_conn->crtc->mode_id = mode_id;
+		wlr_conn->refresh = refresh;
 	}
 
 	free(current_modeinfo);
@@ -2008,6 +2046,12 @@ static void handle_page_flip(int fd, unsigned seq,
 	if (conn != NULL) {
 		conn->pending_page_flip = NULL;
 	}
+
+	uint32_t present_flags = WLR_OUTPUT_PRESENT_HW_CLOCK | WLR_OUTPUT_PRESENT_HW_COMPLETION;
+	if (!page_flip->async) {
+		present_flags |= WLR_OUTPUT_PRESENT_VSYNC;
+	}
+
 	if (page_flip->connectors_len == 0) {
 		drm_page_flip_destroy(page_flip);
 	}
@@ -2038,8 +2082,6 @@ static void handle_page_flip(int fd, unsigned seq,
 		drm_fb_move(&layer->current_fb, &layer->queued_fb);
 	}
 
-	uint32_t present_flags = WLR_OUTPUT_PRESENT_VSYNC |
-		WLR_OUTPUT_PRESENT_HW_CLOCK | WLR_OUTPUT_PRESENT_HW_COMPLETION;
 	/* Don't report ZERO_COPY in multi-gpu situations, because we had to copy
 	 * data between the GPUs, even if we were using the direct scanout
 	 * interface.

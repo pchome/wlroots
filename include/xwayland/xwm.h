@@ -123,6 +123,7 @@ struct wlr_xwm {
 
 	struct wlr_drag *drag;
 	struct wlr_xwayland_surface *drag_focus;
+	struct wlr_xwayland_surface *drop_focus;
 
 	const xcb_query_extension_reply_t *xfixes;
 	const xcb_query_extension_reply_t *xres;
@@ -135,6 +136,7 @@ struct wlr_xwm {
 	struct wl_listener compositor_new_surface;
 	struct wl_listener compositor_destroy;
 	struct wl_listener shell_v1_new_surface;
+	struct wl_listener shell_v1_destroy;
 	struct wl_listener seat_set_selection;
 	struct wl_listener seat_set_primary_selection;
 	struct wl_listener seat_start_drag;
@@ -143,6 +145,8 @@ struct wlr_xwm {
 	struct wl_listener seat_drag_drop;
 	struct wl_listener seat_drag_destroy;
 	struct wl_listener seat_drag_source_destroy;
+	struct wl_listener drag_focus_destroy;
+	struct wl_listener drop_focus_destroy;
 };
 
 struct wlr_xwm *xwm_create(struct wlr_xwayland *wlr_xwayland, int wm_fd);
@@ -155,6 +159,7 @@ void xwm_set_cursor(struct wlr_xwm *xwm, const uint8_t *pixels, uint32_t stride,
 int xwm_handle_selection_event(struct wlr_xwm *xwm, xcb_generic_event_t *event);
 int xwm_handle_selection_client_message(struct wlr_xwm *xwm,
 	xcb_client_message_event_t *ev);
+void xwm_seat_unlink_drag_handlers(struct wlr_xwm *xwm);
 
 void xwm_set_seat(struct wlr_xwm *xwm, struct wlr_seat *seat);
 

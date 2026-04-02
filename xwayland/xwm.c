@@ -1786,6 +1786,16 @@ static void handle_shell_v1_new_surface(struct wl_listener *listener,
 	}
 }
 
+static void handle_shell_v1_destroy(struct wl_listener *listener,
+		void *data) {
+	struct wlr_xwm *xwm =
+		wl_container_of(listener, xwm, shell_v1_destroy);
+	wl_list_remove(&xwm->shell_v1_new_surface.link);
+	wl_list_remove(&xwm->shell_v1_destroy.link);
+	wl_list_init(&xwm->shell_v1_new_surface.link);
+	wl_list_init(&xwm->shell_v1_destroy.link);
+}
+
 void wlr_xwayland_surface_activate(struct wlr_xwayland_surface *xsurface,
 		bool activated) {
 	struct wlr_xwayland_surface *focused = xsurface->xwm->focus_surface;
@@ -1869,6 +1879,8 @@ void xwm_destroy(struct wlr_xwm *xwm) {
 	xwm_selection_finish(&xwm->primary_selection);
 	xwm_selection_finish(&xwm->dnd_selection);
 
+	xwm_seat_unlink_drag_handlers(xwm);
+
 	if (xwm->seat) {
 		if (xwm->seat->selection_source &&
 				data_source_is_xwayland(xwm->seat->selection_source)) {
@@ -1913,6 +1925,7 @@ void xwm_destroy(struct wlr_xwm *xwm) {
 	wl_list_remove(&xwm->compositor_new_surface.link);
 	wl_list_remove(&xwm->compositor_destroy.link);
 	wl_list_remove(&xwm->shell_v1_new_surface.link);
+	wl_list_remove(&xwm->shell_v1_destroy.link);
 	xcb_disconnect(xwm->xcb_conn);
 
 	struct pending_startup_id *pending, *next;
@@ -2162,6 +2175,10 @@ struct wlr_xwm *xwm_create(struct wlr_xwayland *xwayland, int wm_fd) {
 	wl_list_init(&xwm->surfaces_in_stack_order);
 	wl_list_init(&xwm->unpaired_surfaces);
 	wl_list_init(&xwm->pending_startup_ids);
+	wl_list_init(&xwm->seat_drag_source_destroy.link);
+	wl_list_init(&xwm->drag_focus_destroy.link);
+	wl_list_init(&xwm->drop_focus_destroy.link);
+
 	xwm->ping_timeout = 10000;
 
 	xwm->xcb_conn = xcb_connect_to_fd(wm_fd, NULL);
@@ -2257,6 +2274,9 @@ struct wlr_xwm *xwm_create(struct wlr_xwayland *xwayland, int wm_fd) {
 	xwm->shell_v1_new_surface.notify = handle_shell_v1_new_surface;
 	wl_signal_add(&xwayland->shell_v1->events.new_surface,
 		&xwm->shell_v1_new_surface);
+	xwm->shell_v1_destroy.notify = handle_shell_v1_destroy;
+	wl_signal_add(&xwayland->shell_v1->events.destroy,
+		&xwm->shell_v1_destroy);
 
 	xwm_create_wm_window(xwm);
 
