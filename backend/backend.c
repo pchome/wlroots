@@ -193,6 +193,7 @@ static struct wlr_auto_backend_monitor *auto_backend_monitor_create(
 }
 
 static struct wlr_backend *attempt_wl_backend(struct wl_event_loop *loop) {
+#if WLR_HAS_WAYLAND_BACKEND
 	struct wlr_backend *backend = wlr_wl_backend_create(loop, NULL);
 	if (backend == NULL) {
 		return NULL;
@@ -204,6 +205,10 @@ static struct wlr_backend *attempt_wl_backend(struct wl_event_loop *loop) {
 	}
 
 	return backend;
+#else
+	wlr_log(WLR_ERROR, "Cannot create Wayland backend: disabled at compile-time");
+	return NULL;
+#endif
 }
 
 static struct wlr_backend *attempt_x11_backend(struct wl_event_loop *loop,
