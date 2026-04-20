@@ -1,6 +1,6 @@
 wlr_files += files('backend.c')
 
-all_backends = ['drm', 'libinput', 'x11']
+all_backends = ['drm', 'libinput', 'x11', 'wayland']
 backends = get_option('backends')
 if 'auto' in backends and get_option('auto_features').enabled()
 	backends = all_backends
@@ -25,5 +25,7 @@ foreach backend : all_backends
 endforeach
 
 subdir('multi')
+if 'wayland' in backends
 subdir('wayland')
+endif
 subdir('headless')

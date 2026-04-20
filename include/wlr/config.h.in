@@ -22,6 +22,7 @@
  * Required for <wlr/backend/x11.h>.
  */
 #mesondefine WLR_HAS_X11_BACKEND
+#mesondefine WLR_HAS_WAYLAND_BACKEND
 
 /**
  * Whether the GLES2 renderer is compile-time enabled. Equivalent to the
