@@ -297,6 +297,8 @@ xcb_void_cookie_t xwm_send_event_with_size(xcb_connection_t *c,
 		return xcb_send_event(c, propagate, destination, event_mask, buf);
 	} else {
 		assert(false && "Event too long");
+		xcb_void_cookie_t ret = {.sequence = 0u};
+		return ret;
 	}
 }
 
